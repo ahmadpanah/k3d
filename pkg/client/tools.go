@@ -104,6 +104,17 @@ func ImageImportIntoClusterMulti(ctx context.Context, runtime runtimes.Runtime, 
 	return nil
 }
 
+
+
+func isContentDigestNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return (strings.Contains(msg, "content digest") && strings.Contains(msg, "not found")) ||
+		(strings.Contains(msg, "code = NotFound") && strings.Contains(msg, "content digest"))
+}
+
 func importWithToolsNode(ctx context.Context, runtime runtimes.Runtime, cluster *k3d.Cluster, imagesFromRuntime []string, imagesFromTar []string, opts k3d.ImageImportOpts) error {
 	// create tools node to export images
 	toolsNode, err := EnsureToolsNode(ctx, runtime, cluster)
@@ -205,6 +216,20 @@ func importWithStream(ctx context.Context, runtime runtimes.Runtime, cluster *k3
 		}
 	}
 	return nil
+}
+
+func getPlatformString(runtimeInfo *runtimeTypes.RuntimeInfo) string {
+    if runtimeInfo == nil {
+        return ""
+    }
+    
+    // Use OSType (not OS field) - contains the actual OS type: "linux", "windows", etc.
+    // The OS field contains the full OS name which is unsuitable for platform specification
+    if runtimeInfo.OSType != "" && runtimeInfo.Arch != "" {
+        return fmt.Sprintf("%s/%s", runtimeInfo.OSType, runtimeInfo.Arch)
+    }
+    
+    return ""
 }
 
 func loadImageFromStream(ctx context.Context, runtime runtimes.Runtime, stream io.ReadCloser, cluster *k3d.Cluster, imageNames []string) error {
