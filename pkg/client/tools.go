@@ -36,6 +36,7 @@ import (
 
 	l "github.com/k3d-io/k3d/v5/pkg/logger"
 	"github.com/k3d-io/k3d/v5/pkg/runtimes"
+	runtimeTypes "github.com/k3d-io/k3d/v5/pkg/runtimes/types"
 	k3d "github.com/k3d-io/k3d/v5/pkg/types"
 )
 
@@ -44,15 +45,15 @@ import (
 func ImageImportIntoClusterMulti(ctx context.Context, runtime runtimes.Runtime, images []string, cluster *k3d.Cluster, opts k3d.ImageImportOpts) error {
 	// stdin case
 	if len(images) == 1 && images[0] == "-" {
-		runtimeInfo, infoErr := runtime.Info()
-		if infoErr != nil {
+		// try to get runtime info for debugging/logging but proceed regardless
+		if _, infoErr := runtime.Info(); infoErr != nil {
 			l.Log().Warnf("failed to retrieve container runtime information for stdin import: %v", infoErr)
-		} else if preferOCIImport(runtimeInfo) {
-			opts.ForceOCIImport = true
 		}
 
-		err := loadImageFromStream(ctx, runtime, os.Stdin, cluster, []string{"stdin"}, opts.ForceOCIImport)
-		return fmt.Errorf("failed to load image to cluster from stdin: %v", err)
+		if err := loadImageFromStream(ctx, runtime, os.Stdin, cluster, []string{"stdin"}); err != nil {
+			return fmt.Errorf("failed to load image to cluster from stdin: %v", err)
+		}
+		return nil
 	}
 
 	imagesFromRuntime, imagesFromTar, err := findImages(ctx, runtime, images)
@@ -184,6 +185,19 @@ func importWithToolsNode(ctx context.Context, runtime runtimes.Runtime, cluster 
 	}
 	return nil
 }
+
+func ctrLoadCommand(forceOCIImport bool, source string, platform string) []string {
+
+	cmd := []string{"ctr", "-n", "k8s.io", "images", "import"}
+	
+	if platform != "" {
+		cmd = append(cmd, "--platform", platform)
+	}
+	
+	cmd = append(cmd, source)
+	return cmd
+}
+
 
 func importWithStream(ctx context.Context, runtime runtimes.Runtime, cluster *k3d.Cluster, imagesFromRuntime []string, imagesFromTar []string) error {
 	if len(imagesFromRuntime) > 0 {
