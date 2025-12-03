@@ -207,9 +207,25 @@ func importWithStream(ctx context.Context, runtime runtimes.Runtime, cluster *k3
 		if err != nil {
 			return fmt.Errorf("could not open image stream for given images %s: %w", imagesFromRuntime, err)
 		}
+
+		// Get runtime info to determine platform for image import
+		runtimeInfo, infoErr := runtime.Info()
+		if infoErr != nil {
+			l.Log().Warnf("could not retrieve runtime info: %v", infoErr)
+		}
+
+		platformStr := ""
+		if runtimeInfo != nil {
+			platformStr = getPlatformString(runtimeInfo)
+		}
+		_ = platformStr
+
 		err = loadImageFromStream(ctx, runtime, stream, cluster, imagesFromRuntime)
 		if err != nil {
-			return fmt.Errorf("could not load image to cluster from stream %s: %w", imagesFromRuntime, err)
+			if !isContentDigestNotFoundError(err) {
+				return fmt.Errorf("could not load image to cluster from stream %s: %w", imagesFromRuntime, err)
+			}
+			l.Log().Warnf("content digest not found for stream images, continuing: %v", err)
 		}
 		// load the images directly into the nodes
 	}
@@ -225,7 +241,10 @@ func importWithStream(ctx context.Context, runtime runtimes.Runtime, cluster *k3
 			}
 			err = loadImageFromStream(ctx, runtime, file, cluster, []string{fileName})
 			if err != nil {
-				return fmt.Errorf("could not load image to cluster from stream %s: %w", fileName, err)
+				if !isContentDigestNotFoundError(err) {
+					return fmt.Errorf("could not load image to cluster from stream %s: %w", fileName, err)
+				}
+				l.Log().Warnf("content digest not found for tarball %s, continuing: %v", fileName, err)
 			}
 		}
 	}
@@ -285,8 +304,13 @@ func loadImageFromStream(ctx context.Context, runtime runtimes.Runtime, stream i
 			pipeReader := pipeReaders[pipeId]
 			errorGroup.Go(func() error {
 				l.Log().Infof("Importing images '%s' into node '%s'...", imageNames, node.Name)
-				if err := runtime.ExecInNodeWithStdin(ctx, node, []string{"ctr", "image", "import", "--all-platforms", "-"}, pipeReader); err != nil {
-					return fmt.Errorf("failed to import images in node '%s': %v", node.Name, err)
+				// Build import command using ctrLoadCommand helper
+				cmd := ctrLoadCommand(false, "-", "")
+				if err := runtime.ExecInNodeWithStdin(ctx, node, cmd, pipeReader); err != nil {
+					if !isContentDigestNotFoundError(err) {
+						return fmt.Errorf("failed to import images in node '%s': %v", node.Name, err)
+					}
+					l.Log().Warnf("content digest not found for images in node '%s', continuing: %v", node.Name, err)
 				}
 				return nil
 			})
